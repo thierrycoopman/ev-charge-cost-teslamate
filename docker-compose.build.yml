@@ -1,0 +1,20 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build override — builds the image locally instead of pulling from ghcr.io.
+#
+# Use this for local development or when you have made code changes:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# This file is NOT used in production — the base docker-compose.yml uses the
+# pre-built image from GitHub Container Registry.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  tesla-sync:
+    # Override: build from local source instead of pulling the published image.
+    # The 'image:' key from the base file is still used to tag the built image.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tesla-sync:local   # tag for the locally built image

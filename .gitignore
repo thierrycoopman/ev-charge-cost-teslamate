@@ -1,0 +1,38 @@
+# Credentials — NEVER commit these
+.env
+*.json
+!package.json
+
+# Downloaded files
+invoices/
+*.pdf
+
+# Runtime / Docker
+logs/
+.env-cron
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

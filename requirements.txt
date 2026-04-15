@@ -1,0 +1,37 @@
+# Tesla API Explorer — Python Dependencies
+# Install with: pip install -r requirements.txt
+# Recommended: use a virtual environment (python -m venv .venv && source .venv/bin/activate)
+
+# Core HTTP client — used by all scripts
+requests>=2.31.0
+
+# OAuth2 session helper (used internally by TeslaPy; optional for our scripts)
+requests-oauthlib>=1.3.1
+
+# Environment variable loading from .env files
+python-dotenv>=1.0.0
+
+# curl-cffi — bypasses Akamai TLS fingerprinting by impersonating Safari iOS.
+# Required for the charging history GraphQL endpoint.
+# Standard `requests` gets 403'd by Akamai's bot detection regardless of headers.
+curl-cffi>=0.7.0
+
+# TeslaMate PostgreSQL integration (sync_teslamate_costs.py + auth.py --reuse-teslamate)
+psycopg2-binary>=2.9.9
+
+# Excel file parsing (sync_evc_costs.py)
+openpyxl>=3.1.0
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+
+# Rich terminal output (progress bars, tables)
+# rich>=13.7.0
+
+# Pandas — for data analysis on exported CSVs
+# pandas>=2.0.0
+
+# Jupyter — for interactive exploration
+# jupyter>=1.0.0
+
+# TeslaPy — full-featured Python Tesla API client (alternative to our custom auth)
+# teslapy>=2.7.0

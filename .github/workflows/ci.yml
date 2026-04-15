@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Python syntax & import tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile all scripts (syntax check)
+        run: |
+          python -m py_compile scripts/auth.py
+          python -m py_compile scripts/get_charging_history.py
+          python -m py_compile scripts/get_invoices.py
+          python -m py_compile scripts/get_vehicle_data.py
+          python -m py_compile scripts/explore_endpoints.py
+          python -m py_compile scripts/sync_teslamate_costs.py
+          python -m py_compile scripts/sync_evc_costs.py
+          echo "✓ All scripts compiled without syntax errors"
+
+      - name: CLI smoke tests (--help must exit 0)
+        run: |
+          python scripts/sync_teslamate_costs.py --help
+          python scripts/sync_evc_costs.py --help
+          echo "✓ CLI help works for both sync scripts"
+
+      - name: Auth module import
+        run: |
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, "scripts")
+          import auth
+          # Verify key public functions exist
+          assert callable(auth.get_access_token)
+          assert callable(auth.get_valid_tokens)
+          assert callable(auth.refresh_tokens)
+          print("✓ auth module imports and exposes expected interface")
+          EOF
+
+      - name: Excel parser unit test (no DB needed)
+        run: |
+          python - <<'EOF'
+          import sys, io
+          sys.path.insert(0, "scripts")
+
+          # Create a minimal in-memory xlsx to test parse_excel()
+          import openpyxl
+          wb = openpyxl.Workbook()
+          ws = wb.active
+          ws.append(["Start Date", "End Date", "Energy (kWh)", "Costs", "Currency", "Location"])
+          ws.append(["2024-11-15 09:00", "2024-11-15 10:00", 38.5, 12.34, "EUR", "Test Site"])
+          buf = io.BytesIO()
+          wb.save(buf)
+
+          from sync_evc_costs import parse_excel
+          sessions = parse_excel(buf.getvalue())
+          assert len(sessions) == 1, f"Expected 1 session, got {len(sessions)}"
+          assert sessions[0]["kwh"] == 38.5
+          assert sessions[0]["cost"] == 12.34
+          assert sessions[0]["location"] == "Test Site"
+          print("✓ Excel parser correctly reads a minimal workbook")
+          EOF
+
+  docker-lint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # We intentionally run as root inside the container (cron requirement)
+          ignore: DL3002
+          failure-threshold: error

@@ -1,0 +1,12 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Tesla Supercharger costs → TeslaMate (daily at 06:00 UTC)
+0 6 * * * . /app/.env-cron && cd /app && python scripts/sync_teslamate_costs.py --apply >> /app/logs/sync_tesla.log 2>&1
+
+# EVC-Net / Agrisnellaad costs → TeslaMate (daily at 06:30 UTC)
+30 6 * * * . /app/.env-cron && cd /app && python scripts/sync_evc_costs.py --apply >> /app/logs/sync_evc.log 2>&1
+
+# Weekly log rotation — keep last 5 000 lines (Sunday 04:00 UTC)
+0 4 * * 0 tail -n 5000 /app/logs/sync_tesla.log > /tmp/_tlog && mv /tmp/_tlog /app/logs/sync_tesla.log
+1 4 * * 0 tail -n 5000 /app/logs/sync_evc.log   > /tmp/_elog && mv /tmp/_elog /app/logs/sync_evc.log

@@ -1,0 +1,188 @@
+name: Docker — Build & Publish
+
+on:
+  push:
+    branches: [main]         # publishes :latest
+    tags: ["v*.*.*"]         # publishes :1.2.3, :1.2, :1, :latest
+  pull_request:
+    branches: [main]         # build only, no push (validates the Dockerfile)
+  workflow_dispatch:         # allow manual trigger from the Actions UI
+
+env:
+  REGISTRY:   ghcr.io
+  IMAGE_NAME: tesla-sync    # ghcr.io/OWNER/tesla-sync
+
+jobs:
+  build-and-push:
+    name: Build (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write        # needed to push to ghcr.io
+      attestations: write    # needed for provenance (supply chain security)
+      id-token: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64      # standard x86-64 servers
+          - linux/arm64      # Raspberry Pi, Apple Silicon via Docker Desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Docker environment ─────────────────────────────────────────────────
+      - name: Set up QEMU (for cross-platform builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Registry login (skipped on pull_request to avoid secret leaks) ─────
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Compute image tags & labels ────────────────────────────────────────
+      # On tag v1.2.3  → :1.2.3, :1.2, :1, :latest
+      # On main push   → :latest
+      # On PR          → :pr-42 (not pushed)
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+            type=ref,event=pr
+
+      # ── Build (and push if not a PR) ───────────────────────────────────────
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # Output to a registry digest (not a full tag) for multi-platform merge
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions cache: speeds up repeated builds significantly
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to:   type=gha,scope=${{ matrix.platform }},mode=max
+
+      # ── Save digest for the merge job ─────────────────────────────────────
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── Merge amd64 + arm64 into a single multi-platform manifest ─────────────
+  merge:
+    name: Merge multi-platform manifest
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Create and push multi-platform manifest
+        working-directory: /tmp/digests
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Inspect final manifest
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}"
+
+  # ── Draft a GitHub Release on semver tags ─────────────────────────────────
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: merge
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to get full tag history for release notes
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true      # you publish it manually after adding release notes
+          generate_release_notes: true   # auto-generates notes from merged PRs
+          body: |
+            ## Docker image
+
+            ```bash
+            # Pull this specific version
+            docker pull ghcr.io/${{ github.repository_owner }}/tesla-sync:${{ github.ref_name }}
+
+            # Or update docker-compose.yml:
+            # image: ghcr.io/${{ github.repository_owner }}/tesla-sync:${{ github.ref_name }}
+            docker compose pull && docker compose up -d
+            ```
+
+            **Platforms**: `linux/amd64` · `linux/arm64`

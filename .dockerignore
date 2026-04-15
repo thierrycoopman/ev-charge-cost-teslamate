@@ -1,0 +1,33 @@
+# Secrets — never bake into the image
+.env
+.env.*
+!.env.example
+
+# Virtual environment — image installs its own deps
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs — mounted as a bind volume at runtime
+logs/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Docs / dev-only files (not needed inside the container)
+docs/
+README.md
