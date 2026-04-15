@@ -68,9 +68,29 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
+
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:
+    # Python < 3.9 — should not happen with 3.12, but be safe
+    ZoneInfo = None
+    ZoneInfoNotFoundError = Exception
+
+
+def get_timezone(name: str):
+    """Return a ZoneInfo for *name*, or UTC if unknown / unavailable."""
+    if not name or name.upper() == "UTC" or ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, KeyError):
+        print(f"[warn] Unknown timezone '{name}' — falling back to UTC. "
+              f"Install tzdata (pip install tzdata) if needed.")
+        return timezone.utc
 
 try:
     from dotenv import load_dotenv
@@ -187,6 +207,7 @@ def load_accounts(accounts_file: str | None = None) -> list[dict]:
         if not isinstance(accounts, list):
             print(f"[evc] Accounts file must contain a JSON array. Got: {type(accounts)}")
             sys.exit(1)
+        global_tz = os.getenv("EVC_TIMEZONE", "UTC")
         for i, a in enumerate(accounts):
             for key in ("base_url", "email", "password"):
                 if not a.get(key):
@@ -194,6 +215,9 @@ def load_accounts(accounts_file: str | None = None) -> list[dict]:
                     sys.exit(1)
             if not a.get("name"):
                 a["name"] = urlparse(a["base_url"]).hostname.split(".")[0]
+            # Per-account timezone overrides EVC_TIMEZONE env var
+            if not a.get("timezone"):
+                a["timezone"] = global_tz
         print(f"[evc] Loaded {len(accounts)} account(s) from {fp}")
         return accounts
 
@@ -204,7 +228,11 @@ def load_accounts(accounts_file: str | None = None) -> list[dict]:
 
     if email and password:
         name = urlparse(base_url).hostname.split(".")[0]
-        return [{"name": name, "base_url": base_url, "email": email, "password": password}]
+        return [{
+            "name": name, "base_url": base_url,
+            "email": email, "password": password,
+            "timezone": os.getenv("EVC_TIMEZONE", "UTC"),
+        }]
 
     return []
 
@@ -578,7 +606,7 @@ class EVCSession:
 # Session fetching (per account)
 # ---------------------------------------------------------------------------
 
-def _parse_ajax_data(items: list[dict]) -> list[dict]:
+def _parse_ajax_data(items: list[dict], tz=None) -> list[dict]:
     """Convert raw AJAX response items to our normalised session dict format."""
     sessions = []
     for item in items:
@@ -591,6 +619,8 @@ def _parse_ajax_data(items: list[dict]) -> list[dict]:
             start_dt = datetime.fromisoformat(str(start_raw))
         except Exception:
             continue
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=tz or timezone.utc)
         sessions.append({
             "start_dt":  start_dt,
             "stop_dt":   None,
@@ -616,8 +646,11 @@ def fetch_sessions_for_account(account: dict, since: str | None,
     """
     name     = account["name"]
     base_url = account["base_url"]
+    tz       = get_timezone(account.get("timezone", "UTC"))
 
     print(f"\n  ┌── {name}  ({base_url})")
+    if tz is not timezone.utc:
+        print(f"  Timezone : {account.get('timezone')} (times will be converted to UTC)")
 
     evc = EVCSession(base_url, account["email"], account["password"])
     if not evc.login():
@@ -626,12 +659,12 @@ def fetch_sessions_for_account(account: dict, since: str | None,
 
     raw = evc.get_export(since=since, debug_dir=debug_dir)
     if raw:
-        sessions = parse_excel(raw, label=name)
+        sessions = parse_excel(raw, label=name, tz=tz)
     else:
         print(f"  No Excel export found — trying AJAX API...")
         ajax_raw = evc.get_transactions_via_ajax(since=since)
         if ajax_raw:
-            sessions = _parse_ajax_data(ajax_raw)
+            sessions = _parse_ajax_data(ajax_raw, tz=tz)
             print(f"  {len(sessions)} session(s) from AJAX")
         else:
             print(f"  └── ❌ Could not retrieve data automatically.")
@@ -674,11 +707,16 @@ def _find_col(headers: list[str], aliases: list[str]) -> int | None:
     return None
 
 
-def parse_excel(data: bytes, label: str = "") -> list[dict]:
+def parse_excel(data: bytes, label: str = "", tz=None) -> list[dict]:
     """
     Parse an EVC-Net Excel export into a list of session dicts.
     Handles .xlsx (and attempts .xls via openpyxl compatibility).
     Column detection is flexible: case-insensitive, partial match, Dutch/English.
+
+    tz: optional timezone (ZoneInfo or tzinfo) applied to naive datetimes in the
+        export.  EVC portals record times in the local portal timezone, not UTC.
+        Pass get_timezone("Europe/Brussels") for Belgian portals, for example.
+        Defaults to UTC when None.
     """
     tag = f"[excel:{label}]" if label else "[excel]"
     try:
@@ -738,6 +776,11 @@ def parse_excel(data: bytes, label: str = "") -> list[dict]:
             if start_dt is None:
                 continue
 
+        # Attach portal timezone to naive datetimes so to_utc() converts correctly.
+        # EVC exports record local time; without this they would be treated as UTC.
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=tz or timezone.utc)
+
         stop_raw = cell(row, "stop")
         stop_dt  = None
         if isinstance(stop_raw, datetime):
@@ -747,6 +790,8 @@ def parse_excel(data: bytes, label: str = "") -> list[dict]:
                 stop_dt = datetime.fromisoformat(str(stop_raw).strip())
             except (ValueError, TypeError):
                 pass
+        if stop_dt is not None and stop_dt.tzinfo is None:
+            stop_dt = stop_dt.replace(tzinfo=tz or timezone.utc)
 
         sessions.append({
             "start_dt":  start_dt,
@@ -854,8 +899,9 @@ def match_sessions(
         if best:
             idx, evc = best
             matched_evc.add(idx)
-            tm_kwh   = tm.get("charge_energy_added") or 0
-            evc_kwh  = evc.get("kwh") or 0
+            # charge_energy_added comes from PostgreSQL as decimal.Decimal; cast to float
+            tm_kwh   = float(tm.get("charge_energy_added") or 0)
+            evc_kwh  = float(evc.get("kwh") or 0)
             kwh_ok   = True
             if tm_kwh and evc_kwh:
                 kwh_ok = abs(tm_kwh - evc_kwh) / max(tm_kwh, evc_kwh) <= KWH_TOLERANCE_PCT

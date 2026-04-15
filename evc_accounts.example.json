@@ -8,7 +8,8 @@
     "name":     "agrisnellaad",
     "base_url": "https://agrisnellaad.evc-net.com",
     "email":    "your@email.com",
-    "password": "yourpassword"
+    "password": "yourpassword",
+    "timezone": "Europe/Brussels"
   },
 
   {
