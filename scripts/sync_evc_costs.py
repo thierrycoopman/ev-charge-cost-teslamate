@@ -106,6 +106,14 @@ KWH_TOLERANCE_PCT = 0.15  # flag if kWh differs by more than this
 LOGIN_PATH        = "/Login/Login"
 AJAX_PATH         = "/api/ajax"
 
+# Pages to scrape for the export form / CSRF tokens (tried in order)
+TRANSACTIONS_PAGES = [
+    "/Transactions",
+    "/Transactions/Index",
+    "/MyTransactions",
+    "/History",
+]
+
 # Candidate export URL patterns tried in order (same across all EVC-Net portals)
 EXPORT_URL_CANDIDATES = [
     "/Transactions/Export",
@@ -113,6 +121,9 @@ EXPORT_URL_CANDIDATES = [
     "/Transactions/ExcelExport",
     "/Transactions/Download",
     "/Report/Transactions/Export",
+    "/Transactions/ExportCsv",
+    "/Transactions/Excel",
+    "/Export/Transactions",
 ]
 
 # Known EVC-Net (Last Mile Solutions) white-label portals.
@@ -218,23 +229,39 @@ class EVCSession:
         })
 
     def login(self) -> bool:
-        """POST credentials; capture PHPSESSID + SERVERID cookies. Returns True on success."""
+        """
+        Log in to the EVC-Net portal. Returns True on success.
+
+        POST credentials to /Login/Login together with any hidden CSRF fields
+        AND the submit button's name/value (required by the PHP backend).
+        Verifies success by checking that the post-login page does NOT show
+        the 'signed-out' body class.
+        """
         login_url = self.base_url + LOGIN_PATH
 
-        # First GET to pick up any initial cookies / CSRF tokens
+        # GET the login page first — picks up PHPSESSID and hidden CSRF tokens
         try:
             get_resp = self.session.get(login_url, timeout=20, allow_redirects=True)
         except requests.RequestException as exc:
             print(f"  Could not reach login page: {exc}")
             return False
 
-        # Extract hidden CSRF fields — attribute order varies by portal
-        hidden = {}
-        for tag in re.findall(r'<input[^>]+type=["\']hidden["\'][^>]*>', get_resp.text, re.I):
+        # Extract all hidden <input> fields (CSRF tokens, etc.)
+        hidden: dict[str, str] = {}
+        for tag in re.findall(r"<input[^>]+>", get_resp.text, re.I):
+            type_m  = re.search(r'type=["\']([^"\']+)["\']',  tag, re.I)
             name_m  = re.search(r'name=["\']([^"\']+)["\']',  tag, re.I)
             value_m = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
-            if name_m and value_m:
-                hidden[name_m.group(1)] = value_m.group(1)
+            if name_m and type_m and type_m.group(1).lower() == "hidden":
+                hidden[name_m.group(1)] = value_m.group(1) if value_m else ""
+
+        # Also collect submit buttons — PHP checks which button triggered the POST
+        for tag in re.findall(r"<(?:input|button)[^>]+>", get_resp.text, re.I):
+            type_m  = re.search(r'type=["\']([^"\']+)["\']',  tag, re.I)
+            name_m  = re.search(r'name=["\']([^"\']+)["\']',  tag, re.I)
+            value_m = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
+            if name_m and type_m and type_m.group(1).lower() == "submit":
+                hidden[name_m.group(1)] = value_m.group(1) if value_m else ""
 
         payload = {"emailField": self.email, "passwordField": self.password, **hidden}
 
@@ -248,62 +275,293 @@ class EVCSession:
             allow_redirects=False, timeout=20,
         )
 
+        # Follow redirect (302 on success, or back to login on failure).
+        # The portal sometimes issues an HTTP redirect for the post-login page
+        # even though the site runs on HTTPS.  Python's http.cookiejar refuses
+        # to send `secure` cookies over plain HTTP, which breaks the session.
+        # Force every redirect URL to HTTPS to avoid this.
+        landed_html = ""
         if post_resp.status_code in (301, 302, 303):
             redirect = post_resp.headers.get("Location", "")
             if redirect and not redirect.startswith("http"):
                 redirect = self.base_url + redirect
+            # Upgrade http → https so the secure session cookie is sent
+            if redirect.startswith("http://"):
+                redirect = "https://" + redirect[7:]
             if redirect:
-                self.session.get(redirect, timeout=20)
+                landed = self.session.get(redirect, timeout=20, allow_redirects=True)
+                landed_html = landed.text
+                # If we landed back on the login page, credentials were wrong
+                if "/Login/Login" in redirect or "login" in redirect.lower():
+                    print("  Login failed — redirected back to login page "
+                          "(check EVC_EMAIL / EVC_PASSWORD)")
+                    return False
+        else:
+            landed_html = post_resp.text
 
         cookies = self.session.cookies.get_dict()
-
         if not cookies:
             print(f"  Login failed — no session cookies (HTTP {post_resp.status_code})")
+            return False
+
+        # Verify we're actually authenticated (portal puts 'signed-out' on body when not)
+        if "signed-out" in landed_html and "signed-in" not in landed_html:
+            print("  Login failed — session not authenticated "
+                  "(portal shows signed-out page; check credentials)")
             return False
 
         print(f"  Logged in ✓  (cookies: {list(cookies.keys())})")
         return True
 
-    def get_export(self, since: str | None = None, until: str | None = None) -> bytes | None:
-        """Try known export URL patterns; return raw xlsx bytes or None."""
-        params = {}
-        if since:
-            params.update({"startDate": since, "StartDate": since, "start": since})
-        if until:
-            params.update({"endDate": until,   "EndDate": until,   "end":   until})
+    @staticmethod
+    def _is_xlsx(resp: "requests.Response") -> bool:
+        """Return True if the response looks like an Excel/ZIP binary file."""
+        ct = resp.headers.get("Content-Type", "").lower()
+        return (
+            "excel" in ct or "spreadsheet" in ct or
+            "octet-stream" in ct or "zip" in ct or
+            resp.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
+        )
 
-        for path in EXPORT_URL_CANDIDATES:
+    @staticmethod
+    def _parse_form(html: str) -> dict[str, str]:
+        """
+        Extract all form field values from an HTML fragment:
+        - hidden inputs (CSRF tokens, etc.)
+        - text/date inputs (their current value= attribute)
+        - select elements (their selected option's value, or first option)
+        Returns a flat name→value dict.
+        """
+        fields: dict[str, str] = {}
+
+        # <input> fields (hidden, text, date, etc. — not submit/button/file)
+        for tag in re.findall(r"<input[^>]+>", html, re.I):
+            type_m  = re.search(r'type=["\']([^"\']+)["\']',  tag, re.I)
+            name_m  = re.search(r'name=["\']([^"\']+)["\']',  tag, re.I)
+            value_m = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
+            if not name_m:
+                continue
+            t = (type_m.group(1).lower() if type_m else "text")
+            if t not in ("submit", "button", "reset", "file", "image", "checkbox", "radio"):
+                fields[name_m.group(1)] = value_m.group(1) if value_m else ""
+
+        # <select> elements — use selected option or first option
+        for sel_m in re.finditer(r"<select([^>]*)>(.*?)</select>", html,
+                                  re.DOTALL | re.I):
+            name_m = re.search(r'name=["\']([^"\']+)["\']', sel_m.group(1), re.I)
+            if not name_m:
+                continue
+            name    = name_m.group(1)
+            options = re.findall(r"<option([^>]*)>", sel_m.group(2), re.I)
+            value   = ""
+            for opt in options:
+                val_m = re.search(r'value=["\']([^"\']*)["\']', opt, re.I)
+                if "selected" in opt.lower() and val_m:
+                    value = val_m.group(1)
+                    break
+            if not value and options:
+                val_m = re.search(r'value=["\']([^"\']*)["\']', options[0], re.I)
+                value = val_m.group(1) if val_m else ""
+            fields[name] = value
+
+        return fields
+
+    @staticmethod
+    def _detect_date_format(html: str) -> str:
+        """
+        Detect the date format used by the portal's date pickers.
+        Looks for data-date-format attributes (e.g. 'DD-MM-YYYY', 'YYYY-MM-DD').
+        Returns the detected format or 'YYYY-MM-DD' as default.
+        """
+        m = re.search(r'data-date-format=["\']([^"\']+)["\']', html, re.I)
+        return m.group(1) if m else "YYYY-MM-DD"
+
+    @staticmethod
+    def _format_date(iso_date: str, fmt: str) -> str:
+        """
+        Convert a YYYY-MM-DD date string to the portal's date format.
+        Supports: DD-MM-YYYY, MM-DD-YYYY, DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD.
+        """
+        try:
+            dt = datetime.strptime(iso_date, "%Y-%m-%d")
+        except ValueError:
+            return iso_date  # pass through if already formatted
+        sep   = "-" if "-" in fmt else "/"
+        upper = fmt.upper()
+        if upper.startswith("DD"):
+            return dt.strftime(f"%d{sep}%m{sep}%Y")
+        if upper.startswith("MM"):
+            return dt.strftime(f"%m{sep}%d{sep}%Y")
+        return iso_date  # YYYY-MM-DD fallback
+
+    def _load_transactions_page(self) -> tuple[str, str]:
+        """
+        GET the Transactions listing page (trying several candidate paths).
+        Returns (page_html, final_url) or ("", "") on failure.
+        """
+        for path in TRANSACTIONS_PAGES:
             url = self.base_url + path
             try:
-                resp = self.session.get(url, params=params, timeout=30, allow_redirects=True)
-                ct   = resp.headers.get("Content-Type", "")
-                is_xlsx = (
-                    "excel" in ct or "spreadsheet" in ct or
-                    "octet-stream" in ct or "zip" in ct or
-                    resp.content[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0")
+                resp = self.session.get(url, timeout=20, allow_redirects=True)
+                # A real Transactions page is substantially larger than a login redirect
+                if resp.status_code == 200 and len(resp.text) > 5_000:
+                    print(f"  Transactions page: {path} → {resp.status_code} "
+                          f"({len(resp.text):,} chars)")
+                    return resp.text, resp.url
+            except requests.RequestException:
+                continue
+        return "", ""
+
+    def get_export(self, since: str | None = None, until: str | None = None,
+                   debug_dir: "Path | None" = None) -> bytes | None:
+        """
+        Download the transaction export.
+
+        Strategy:
+        1. Load the Transactions page and detect the date format.
+        2. Find every <form> on the page; for each form that has a submit button
+           whose name or value contains 'export', build the full form payload and
+           submit with that button active.  This covers portals where the export
+           is a plain form field (e.g. exportButton=Export on /Transactions/List).
+        3. Fall back to known GET/POST URL candidates for portals with a dedicated
+           export endpoint.
+        """
+        # ── Load Transactions page ────────────────────────────────────────────
+        page_html, page_url = self._load_transactions_page()
+
+        if debug_dir and page_html:
+            debug_path = Path(debug_dir) / "transactions_page.html"
+            debug_path.write_text(page_html, encoding="utf-8")
+            print(f"  [debug] Transactions page saved to {debug_path}")
+
+        referer    = page_url or (self.base_url + "/Transactions")
+        date_fmt   = self._detect_date_format(page_html) if page_html else "YYYY-MM-DD"
+        today      = datetime.now().strftime("%Y-%m-%d")
+        since_fmt  = self._format_date(since, date_fmt) if since else \
+                     self._format_date("2000-01-01", date_fmt)
+        until_fmt  = self._format_date(until or today, date_fmt)
+
+        # ── Stage 1: scrape forms from the Transactions page ─────────────────
+        if page_html:
+            for form_m in re.finditer(r"<form([^>]*)>(.*?)</form>",
+                                      page_html, re.DOTALL | re.I):
+                form_attrs, form_body = form_m.group(1), form_m.group(2)
+
+                # Collect all submit buttons in this form
+                submit_buttons: list[tuple[str, str]] = []
+                for tag in re.findall(r"<(?:input|button)[^>]+>", form_body, re.I):
+                    type_m  = re.search(r'type=["\']([^"\']+)["\']',  tag, re.I)
+                    name_m  = re.search(r'name=["\']([^"\']+)["\']',  tag, re.I)
+                    value_m = re.search(r'value=["\']([^"\']*)["\']', tag, re.I)
+                    if name_m and type_m and type_m.group(1).lower() == "submit":
+                        submit_buttons.append((name_m.group(1),
+                                               value_m.group(1) if value_m else ""))
+
+                # Only care about forms that have an "export" submit button
+                export_btn = next(
+                    ((n, v) for n, v in submit_buttons
+                     if "export" in n.lower() or "export" in v.lower()),
+                    None,
                 )
-                if resp.status_code == 200 and is_xlsx:
-                    print(f"  Export found at {path} ({len(resp.content):,} bytes)")
-                    return resp.content
-                print(f"  {path} → {resp.status_code} ({ct[:50]})")
-            except requests.RequestException as exc:
-                print(f"  {path} → error: {exc}")
+                if not export_btn:
+                    continue
+
+                # Build the full form payload
+                form_data = self._parse_form(form_body)
+
+                # Override date fields with the correct format for this portal
+                for key in list(form_data.keys()):
+                    key_lower = key.lower()
+                    if "start" in key_lower or "from" in key_lower:
+                        form_data[key] = since_fmt
+                    elif "end" in key_lower or "to" in key_lower:
+                        form_data[key] = until_fmt
+
+                # Activate the export button (don't include other submit buttons)
+                for n, v in submit_buttons:
+                    form_data.pop(n, None)
+                form_data[export_btn[0]] = export_btn[1]
+
+                action_m = re.search(r'action=["\']([^"\']+)["\']', form_attrs, re.I)
+                action   = action_m.group(1) if action_m else "/Transactions"
+                action_url = action if action.startswith("http") \
+                             else self.base_url + action
+
+                method_m = re.search(r'method=["\'](\w+)["\']', form_attrs, re.I)
+                use_post = method_m and method_m.group(1).upper() == "POST"
+
+                print(f"  Submitting export form → {action} "
+                      f"({'POST' if use_post else 'GET'})")
+                try:
+                    fn = self.session.post if use_post else self.session.get
+                    resp = fn(
+                        action_url,
+                        data=form_data if use_post else None,
+                        params=form_data if not use_post else None,
+                        headers={"Referer": referer},
+                        timeout=60, allow_redirects=True,
+                    )
+                    if resp.status_code == 200 and self._is_xlsx(resp):
+                        print(f"  ✓ Export downloaded ({len(resp.content):,} bytes)")
+                        return resp.content
+                    ct = resp.headers.get("Content-Type", "")
+                    print(f"  Form → {action} : {resp.status_code} ({ct[:80]})")
+                except requests.RequestException as exc:
+                    print(f"  Form → {action} : error: {exc}")
+
+        # ── Stage 2: known export URL candidates (GET + POST) ─────────────────
+        page_tokens = self._parse_form(page_html) if page_html else {}
+        extra = {
+            "startDateField": since_fmt, "endDateField": until_fmt,
+            "startDate":      since_fmt, "endDate":      until_fmt,
+            "exportButton":   "Export",
+        }
+        for path in EXPORT_URL_CANDIDATES:
+            url = self.base_url + path
+            for use_post in (False, True):
+                payload = {**page_tokens, **extra}
+                try:
+                    fn   = self.session.post if use_post else self.session.get
+                    resp = fn(url,
+                              data=payload if use_post else None,
+                              params=payload if not use_post else None,
+                              headers={"Referer": referer},
+                              timeout=60, allow_redirects=True)
+                    if resp.status_code == 200 and self._is_xlsx(resp):
+                        verb = "POST" if use_post else "GET"
+                        print(f"  ✓ Export via {verb} → {path} "
+                              f"({len(resp.content):,} bytes)")
+                        return resp.content
+                    if not use_post:
+                        ct = resp.headers.get("Content-Type", "")
+                        print(f"  GET {path} → {resp.status_code} ({ct[:60]})")
+                except requests.RequestException as exc:
+                    if not use_post:
+                        print(f"  GET {path} → error: {exc}")
+
         return None
 
     def get_transactions_via_ajax(self, since: str | None = None) -> list[dict] | None:
         """Fallback: attempt to retrieve transactions via the AJAX API."""
-        for handler in ["TransactionsAsyncService", "ChargingHistoryAsyncService",
-                        "SessionAsyncService", "ReportAsyncService"]:
-            for method in ["overview", "list", "getTransactions", "history"]:
+        handlers = [
+            "TransactionsAsyncService", "ChargingHistoryAsyncService",
+            "SessionAsyncService",      "ReportAsyncService",
+        ]
+        methods = ["overview", "list", "getTransactions", "history", "export"]
+        for handler in handlers:
+            for method in methods:
                 try:
-                    params = {"startDate": since} if since else {}
+                    params  = {"startDate": since} if since else {}
                     payload = {
-                        "requests": json.dumps({"handler": handler, "method": method, "params": params})
+                        "requests": json.dumps(
+                            {"handler": handler, "method": method, "params": params}
+                        )
                     }
                     resp = self.session.post(
                         self.base_url + AJAX_PATH,
                         data=payload,
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        headers={"Content-Type": "application/x-www-form-urlencoded",
+                                 "X-Requested-With": "XMLHttpRequest"},
                         timeout=30,
                     )
                     resp.raise_for_status()
@@ -346,11 +604,15 @@ def _parse_ajax_data(items: list[dict]) -> list[dict]:
     return sessions
 
 
-def fetch_sessions_for_account(account: dict, since: str | None) -> list[dict]:
+def fetch_sessions_for_account(account: dict, since: str | None,
+                               debug_dir: "Path | None" = None) -> list[dict]:
     """
     Log in to one EVC-Net portal and fetch all transaction sessions.
     Returns a list of session dicts, each tagged with 'network' = account name.
     On failure, logs a warning and returns [].
+
+    Pass debug_dir to save the Transactions page HTML for manual inspection
+    when the automatic export cannot be found.
     """
     name     = account["name"]
     base_url = account["base_url"]
@@ -362,7 +624,7 @@ def fetch_sessions_for_account(account: dict, since: str | None) -> list[dict]:
         print(f"  └── ⚠  Login failed — skipping. Check credentials for '{name}'.")
         return []
 
-    raw = evc.get_export(since=since)
+    raw = evc.get_export(since=since, debug_dir=debug_dir)
     if raw:
         sessions = parse_excel(raw, label=name)
     else:
@@ -373,6 +635,9 @@ def fetch_sessions_for_account(account: dict, since: str | None) -> list[dict]:
             print(f"  {len(sessions)} session(s) from AJAX")
         else:
             print(f"  └── ❌ Could not retrieve data automatically.")
+            if debug_dir:
+                print(f"      [debug] Transactions page HTML saved to {debug_dir}/")
+                print(f"              Inspect it to find the export form/button.")
             print(f"      Manual fallback:")
             print(f"        1. Go to {base_url}/Transactions → set date range → Export")
             print(f"        2. Save the .xlsx file")
@@ -381,7 +646,7 @@ def fetch_sessions_for_account(account: dict, since: str | None) -> list[dict]:
 
     # Tag every session with the network name so the output table is clear
     for s in sessions:
-        s["network"] = name  # shown in match table and apply log
+        s["network"] = name
 
     print(f"  └── ✓  {len(sessions)} session(s) retrieved from {name}")
     return sessions
@@ -681,6 +946,8 @@ def main():
                         help="PostgreSQL URL (overrides TESLAMATE_DATABASE_URL)")
     parser.add_argument("--list-networks", action="store_true",
                         help="Print all known EVC-Net network URLs and exit")
+    parser.add_argument("--debug", action="store_true",
+                        help="Save Transactions page HTML to ./logs/ to help diagnose export failures")
     args = parser.parse_args()
 
     # ── --list-networks ───────────────────────────────────────────────────────
@@ -743,10 +1010,16 @@ def main():
                 print(f"[error] No account named '{args.network}' in the accounts file.")
                 sys.exit(1)
 
+        debug_dir = None
+        if args.debug:
+            debug_dir = Path(__file__).parent.parent / "logs"
+            debug_dir.mkdir(exist_ok=True)
+            print(f"[debug] Transactions page HTML will be saved to {debug_dir}/")
+
         print(f"[evc] Fetching from {len(accounts)} network(s) in parallel...")
         with ThreadPoolExecutor(max_workers=len(accounts)) as pool:
             futures = {
-                pool.submit(fetch_sessions_for_account, acct, args.since): acct["name"]
+                pool.submit(fetch_sessions_for_account, acct, args.since, debug_dir): acct["name"]
                 for acct in accounts
             }
             for future in as_completed(futures):
