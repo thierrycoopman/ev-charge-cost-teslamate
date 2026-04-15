@@ -52,7 +52,7 @@ Environment variables (or set in .env):
   TESLA_LOCALE            fr_BE
 
 Cron (daily at 6am):
-  0 6 * * * cd /path/to/tesla-api-explorer && .venv/bin/python scripts/sync_teslamate_costs.py --apply >> logs/sync.log 2>&1
+  0 6 * * * cd /path/to/ev-charge-cost-teslamate && .venv/bin/python scripts/sync_teslamate_costs.py --apply >> logs/sync.log 2>&1
 
 Requires: pip install psycopg2-binary python-dotenv
 """

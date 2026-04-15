@@ -1,8 +1,8 @@
 # tesla-sync
 
-[![CI](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/ci.yml)
-[![Docker](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/docker.yml/badge.svg)](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/docker.yml)
-[![Image](https://ghcr.io/thierrycoopman/tesla-sync)](https://github.com/thierrycoopman/tesla-api-explorer/pkgs/container/tesla-sync)
+[![CI](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/ci.yml/badge.svg)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/ci.yml)
+[![Docker](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/docker.yml/badge.svg)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/docker.yml)
+[![Image](https://ghcr.io/thierrycoopman/tesla-sync)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/pkgs/container/tesla-sync)
 
 ---
 
@@ -112,8 +112,8 @@ Key points:
 ### Step 1 — Get the code
 
 ```bash
-git clone https://github.com/thierrycoopman/tesla-api-explorer.git
-cd tesla-api-explorer
+git clone https://github.com/thierrycoopman/ev-charge-cost-teslamate.git
+cd ev-charge-cost-teslamate
 ```
 
 ### Step 2 — Configure `.env`
@@ -460,8 +460,8 @@ Use this when you want to test local changes before publishing.
 
 ```bash
 # Clone
-git clone https://github.com/thierrycoopman/tesla-api-explorer.git
-cd tesla-api-explorer
+git clone https://github.com/thierrycoopman/ev-charge-cost-teslamate.git
+cd ev-charge-cost-teslamate
 
 # Configure
 cp .env.example .env

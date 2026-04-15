@@ -42,7 +42,7 @@ Environment variables (or .env):
   TESLAMATE_DATABASE_URL  postgresql://teslamate:teslamate@localhost:5432/teslamate
 
 Cron (daily at 6:30am, after Tesla sync):
-  30 6 * * * cd ~/Desktop/Coding/tesla-api-explorer && .venv/bin/python scripts/sync_evc_costs.py --apply >> logs/sync_evc.log 2>&1
+  30 6 * * * cd ~/Desktop/Coding/ev-charge-cost-teslamate && .venv/bin/python scripts/sync_evc_costs.py --apply >> logs/sync_evc.log 2>&1
 
 Requires: pip install requests openpyxl psycopg2-binary python-dotenv
 """
