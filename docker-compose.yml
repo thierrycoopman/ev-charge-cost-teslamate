@@ -17,9 +17,8 @@ version: "3.8"
 services:
   tesla-sync:
     # Pre-built multi-platform image (amd64 + arm64).
-    # Replace YOUR_GITHUB_USERNAME with the GitHub user/org that owns this repo.
     # Pin to a specific version for production stability, e.g. :1.0.0
-    image: ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync:latest
+    image: ghcr.io/thierrycoopman/tesla-sync:latest
 
     container_name: tesla-sync
     restart: unless-stopped

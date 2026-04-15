@@ -1,10 +1,8 @@
 # tesla-sync
 
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer/actions/workflows/ci.yml)
-[![Docker](https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer/actions/workflows/docker.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer/actions/workflows/docker.yml)
-[![Image](https://ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync)](https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer/pkgs/container/tesla-sync)
-
-> **Replace `YOUR_GITHUB_USERNAME`** in the badges above with your actual GitHub username after pushing this repo.
+[![CI](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/ci.yml)
+[![Docker](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/docker.yml/badge.svg)](https://github.com/thierrycoopman/tesla-api-explorer/actions/workflows/docker.yml)
+[![Image](https://ghcr.io/thierrycoopman/tesla-sync)](https://github.com/thierrycoopman/tesla-api-explorer/pkgs/container/tesla-sync)
 
 ---
 
@@ -114,7 +112,7 @@ Key points:
 ### Step 1 — Get the code
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer.git
+git clone https://github.com/thierrycoopman/tesla-api-explorer.git
 cd tesla-api-explorer
 ```
 
@@ -157,8 +155,7 @@ docker network ls | grep tesla
 **Using the pre-built image from GitHub Container Registry (fastest):**
 
 ```bash
-# Replace YOUR_GITHUB_USERNAME with the actual owner of this repo
-docker pull ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync:latest
+docker pull ghcr.io/thierrycoopman/tesla-sync:latest
 
 # Start (reads image name from docker-compose.yml)
 docker compose up -d
@@ -415,7 +412,7 @@ Pull Request          Push to main           Tag v1.2.3
 
 **Platforms built**: `linux/amd64` (x86-64 servers) and `linux/arm64` (Raspberry Pi, Apple Silicon via Docker Desktop).
 
-**Registry**: `ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync`  
+**Registry**: `ghcr.io/thierrycoopman/tesla-sync`  
 **Visibility**: Linked to the GitHub repo — public if the repo is public.
 
 ### Creating a release
@@ -439,9 +436,9 @@ Go to **GitHub → Releases** to publish the draft release with notes.
 In your `docker-compose.yml`, pin to a specific version instead of `latest`:
 
 ```yaml
-image: ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync:1.0.0   # pinned — never auto-updates
-image: ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync:1        # major — auto-gets 1.x.y patches
-image: ghcr.io/YOUR_GITHUB_USERNAME/tesla-sync:latest   # always latest main
+image: ghcr.io/thierrycoopman/tesla-sync:1.0.0   # pinned — never auto-updates
+image: ghcr.io/thierrycoopman/tesla-sync:1        # major — auto-gets 1.x.y patches
+image: ghcr.io/thierrycoopman/tesla-sync:latest   # always latest main
 ```
 
 Pinning to a specific version (`1.0.0`) is recommended for production — you control exactly when you update. Run `docker compose pull && docker compose up -d` to upgrade.
@@ -463,7 +460,7 @@ Use this when you want to test local changes before publishing.
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_GITHUB_USERNAME/tesla-api-explorer.git
+git clone https://github.com/thierrycoopman/tesla-api-explorer.git
 cd tesla-api-explorer
 
 # Configure
