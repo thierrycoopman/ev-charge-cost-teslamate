@@ -2,6 +2,7 @@
 .env
 *.json
 !package.json
+!evc_accounts.example.json
 
 # Downloaded files
 invoices/

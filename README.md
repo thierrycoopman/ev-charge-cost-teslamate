@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/ci.yml/badge.svg)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/ci.yml)
 [![Docker](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/docker.yml/badge.svg)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/actions/workflows/docker.yml)
-[![Image](https://ghcr.io/thierrycoopman/tesla-sync)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/pkgs/container/tesla-sync)
+[![ghcr.io](https://img.shields.io/badge/ghcr.io-tesla--sync-blue?logo=docker)](https://github.com/thierrycoopman/ev-charge-cost-teslamate/pkgs/container/tesla-sync)
 
 ---
 

@@ -34,6 +34,11 @@ services:
       # Bind mount: log files are readable directly on the host in ./logs/
       - ./logs:/app/logs
 
+      # Optional: multi-network EVC-Net accounts file.
+      # Copy evc_accounts.example.json → evc_accounts.json, fill in credentials,
+      # then uncomment the line below and set EVC_ACCOUNTS_FILE in .env.
+      # - ./evc_accounts.json:/app/evc_accounts.json:ro
+
     networks:
       - teslamate_net
 

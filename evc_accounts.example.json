@@ -1,0 +1,92 @@
+[
+  {
+    "_comment": "Copy this file to evc_accounts.json and fill in your credentials.",
+    "_note": "EVC-Net is a white-label platform by Last Mile Solutions. Each network operator",
+    "_note2": "runs their own portal — credentials are per-portal (not shared across networks).",
+    "_note3": "Only include networks where you actually have an account.",
+
+    "name":     "agrisnellaad",
+    "base_url": "https://agrisnellaad.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "_comment": "Remove or comment out any network you don't have an account with.",
+
+    "name":     "50five-belux",
+    "base_url": "https://50five-sbelux.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "50five-nl",
+    "base_url": "https://50five-snl.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "50five-de",
+    "base_url": "https://50five-sde.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "50five-uk",
+    "base_url": "https://50five-suk.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "50five",
+    "base_url": "https://50five.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "orange-charging",
+    "base_url": "https://orangecharging.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "chargewell",
+    "base_url": "https://chargewell.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "chargekom",
+    "base_url": "https://chargekom.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "oplaadpunten",
+    "base_url": "https://oplaadpunten.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "electromobility-solutions",
+    "base_url": "https://electromobilitysolutions.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  },
+
+  {
+    "name":     "indelec",
+    "base_url": "https://indelec.evc-net.com",
+    "email":    "your@email.com",
+    "password": "yourpassword"
+  }
+]
